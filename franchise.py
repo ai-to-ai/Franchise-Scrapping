@@ -4,25 +4,31 @@ from scrapy.crawler import CrawlerRunner
 from scrapy.utils.log import configure_logging
 from scrapy.http import FormRequest
 import re
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
+from itemadapter import ItemAdapter
+
+import schedule
+import time
+
+import openpyxl
+
+# class CustomExporter(XlsxItemExporter):
+#     def __init__(self, file, **kwargs):
+#         super().__init__(file, include_header_row=False, **kwargs)
 
 class FranchiseScrapy(scrapy.Spider):
 	name="Franchise"
 	base_url = "https://www.franchiseball.com"
-	count = 0
 
-	# def __init__(self):
-	# 	chrome_options = Options()
-	# 	chrome_options.add_argument('--headless')
+	custom_settings={
+		"ITEM_PIPELINES": {
+			'__main__.XLSXPipeline': 100
+			},
+		"CONCURRENT_REQUESTS":32
+	}
 
-	# 	self.driver = webdriver.Chrome(executable_path="./chromedriver.exe",options=chrome_options)
-        # self.driver = webdriver.Chrome(executable_path=r"C:\\chromedriver\\chromedriver.exe",options=chrome_options)
 	def start_requests(self):
 		yield scrapy.Request(url="https://www.franchiseball.com/login.php",callback=self.parse)
+	
 	def parse(self,response):
 		formdata = {
 			'login_email':'cincinnati-reds@outlook.com',
@@ -34,7 +40,7 @@ class FranchiseScrapy(scrapy.Spider):
                                 clickdata={'name': 'submit'},
                                 callback=self.parse1)
 	def parse1(self, response):
-
+		# yield scrapy.Request(url = "https://www.franchiseball.com/player.php?id=938370", callback = self.parse6)
 		yield scrapy.Request(url = "https://www.franchiseball.com/research/data/index/leagues", callback = self.parse2)
 
 	def parse2(self, response):
@@ -46,9 +52,12 @@ class FranchiseScrapy(scrapy.Spider):
 
 	def parse3(self, response):
 		teams = response.xpath('//div[contains(@class,"standings-team-row")]/div[contains(@style,"overflow:hidden")]/a/@href').getall()
-		# for team in teams:
-		url = self.base_url + teams[1]
-		yield scrapy.Request(url = url, callback= self.parse4)
+		for team in teams:
+			url = self.base_url + team
+			yield scrapy.Request(url = url, callback= self.parse4)
+
+		# url = self.base_url + teams[0]
+		# yield scrapy.Request(url = url, callback= self.parse4)
 
 	def parse4(self, response):
 		tid = re.search(r'id=(.*)', response.url).group(1)
@@ -57,9 +66,10 @@ class FranchiseScrapy(scrapy.Spider):
 		yield scrapy.Request(url = researchUrl, callback = self.parse5)
 
 	def parse5(self, response):
-		players = response.xpath('//tr[@class="stat-row"]/td').getall()
+		players = response.xpath('//tr[@class="stat-row"]/td/a/@href').getall()
 
-		for player in players:
+		for i, player in enumerate(players):
+
 			url = self.base_url + player
 			yield scrapy.Request(url=url, callback = self.parse6)
 
@@ -68,15 +78,16 @@ class FranchiseScrapy(scrapy.Spider):
 			self.log("Captcha found")
 		pid = re.search(r'id=(.*)', response.url).group(1)
 
-		print("========player======")
 		item = Item()
+		
+		item["player_link"] = response.url
 		item["player_name"] = response.xpath(selectors["player_name"]).get(default="NA")
 		item["team_name"] = response.xpath(selectors["team_name"]).get(default="NA")
 		item["salary"] = response.xpath(selectors["salary"]).get(default="NA")
 		item["ftv"] = response.xpath(selectors["ftv"]).get(default="NA")
 		item["age"] = response.xpath(selectors["age"]).get(default="NA")
 
-		item["pos"] =  self.remainAlpabet(response.xpath(selectors["pos"]).get(default = "NA"))
+		item["pos"] =  self.remainAlpabetNumeric(response.xpath(selectors["pos"]).get(default = "NA"))
 		if item["pos"] == "P":
 			item["tbhrows"] = self.remainAlpabet(response.xpath(selectors["tbhrows_p"]).get(default="NA"))
 			item["bats"] = self.remainAlpabet(response.xpath(selectors["bats_p"]).get(default="NA"))
@@ -87,7 +98,6 @@ class FranchiseScrapy(scrapy.Spider):
 		item["avg"] = response.xpath(selectors["avg"]).get(default="NA")
 		item["slg"] = response.xpath(selectors["slg"]).get(default="NA")
 		item["rbi"] = response.xpath(selectors["rbi"]).get(default="NA")
-		item["rank"] = response.xpath(selectors["rank"]).get(default="NA")
 	    #season data
 		item['season_ab'] = response.xpath(selectors["season_ab"]).get(default="NA")
 		item["season_hits"] = response.xpath(selectors["season_hits"]).get(default="NA")
@@ -98,6 +108,7 @@ class FranchiseScrapy(scrapy.Spider):
 		item['season_3b'] = response.xpath(selectors["season_3b"]).get(default="NA")
 		item['season_hr'] = response.xpath(selectors["season_hr"]).get(default="NA")
 		item['season_bb'] = response.xpath(selectors["season_bb"]).get(default="NA")
+		item['season_runs'] = response.xpath(selectors["season_runs"]).get(default="NA")
 		item['season_tb'] = response.xpath(selectors["season_tb"]).get(default="NA")
 		item['season_sb'] = response.xpath(selectors["season_sb"]).get(default="NA")
 		item['season_sb_percent'] = response.xpath(selectors["season_sb_percent"]).get(default="NA")
@@ -130,10 +141,10 @@ class FranchiseScrapy(scrapy.Spider):
 		item['minors_rc'] = response.xpath(selectors["minors_rc"]).get(default="NA")
 
 	    #scoutp data
-		item['scoutp_power'] = response.xpath(selectors["scoutp_power"]).get(default="NA")
-		item['scoutp_contact'] = response.xpath(selectors["scoutp_contact"]).get(default="NA")
-		item['scoutp_speed'] = response.xpath(selectors["scoutp_speed"]).get(default="NA")
-		item['scoutp_defense'] = response.xpath(selectors["scoutp_defense"]).get(default="NA")
+		item['scoutp_control'] = response.xpath(selectors["scoutp_control"]).get(default="NA")
+		item['scoutp_movement'] = response.xpath(selectors["scoutp_movement"]).get(default="NA")
+		item['scoutp_velocity'] = response.xpath(selectors["scoutp_velocity"]).get(default="NA")
+		item['scoutp_stamina'] = response.xpath(selectors["scoutp_stamina"]).get(default="NA")
 
 	    #scouth data
 		item['scouth_power'] = response.xpath(selectors["scouth_power"]).get(default="NA")
@@ -152,13 +163,15 @@ class FranchiseScrapy(scrapy.Spider):
 		yield scrapy.Request(url = url, callback= self.parse7, cb_kwargs={'item': item})
 
 	def parse7(self, response, item):
-		self.log("=============career===========")
+
+		no_career_data = True
 		career_table_rows = response.xpath(selectors["career_table"])
 		for row in range(0, len(career_table_rows)):
 			#career data
 			row_selector = selectors["career_table"] + "["+str(row+1)+"]"
 			season_data = response.xpath(row_selector+selectors["career_season"]).get(default="NA")
 			if season_data.isnumeric() :
+				no_career_data = False
 				item['career_season'] = season_data
 				item['career_team'] = response.xpath(row_selector+selectors["career_team"]).get(default="NA")
 				item['career_ab'] = response.xpath(row_selector+selectors["career_ab"]).get(default="NA")
@@ -174,6 +187,21 @@ class FranchiseScrapy(scrapy.Spider):
 				# self.log(item)
 				yield item
 
+		if no_career_data:
+			item["career_season"] = "NA"
+			item["career_team"] = "NA"
+			item["career_ab"] = "NA"
+			item["career_hits"] = "NA"
+			item["career_avg"] = "NA"
+			item["career_rbi"] = "NA"
+			item["career_slg"] = "NA"
+			item["career_2b"] = "NA"
+			item["career_3b"] = "NA"
+			item["career_hr"] = "NA"
+			item["career_sb"] = "NA"
+			yield item
+
+
 	def clean(self,value):
 		new_str = re.sub(r'[\t\n\r]',"",value)
 		return new_str
@@ -183,8 +211,15 @@ class FranchiseScrapy(scrapy.Spider):
 		value_1 = re.sub(r'[^a-zA-Z]',"",value)
 		return value_1
 
+	def remainAlpabetNumeric(self, value):
+
+		value_1 = re.sub(r'[^a-zA-Z0-9]',"",value)
+		return value_1
+
 class Item(scrapy.Item):
     # define the fields for your item here like:
+    
+    player_link = scrapy.Field()
     player_name = scrapy.Field()
     team_name = scrapy.Field()
     salary = scrapy.Field()
@@ -195,8 +230,8 @@ class Item(scrapy.Item):
     avg = scrapy.Field()
     slg = scrapy.Field()
     rbi = scrapy.Field()
-    rank = scrapy.Field()
     pos = scrapy.Field()
+
     #season data
     season_ab = scrapy.Field()
     season_hits = scrapy.Field()
@@ -207,6 +242,7 @@ class Item(scrapy.Item):
     season_3b = scrapy.Field()
     season_hr = scrapy.Field()
     season_bb = scrapy.Field()
+    season_runs = scrapy.Field()
     season_tb = scrapy.Field()
     season_sb = scrapy.Field()
     season_sb_percent = scrapy.Field()
@@ -252,10 +288,10 @@ class Item(scrapy.Item):
     minors_rc = scrapy.Field()
 
     #scoutp data
-    scoutp_power = scrapy.Field()
-    scoutp_contact = scrapy.Field()
-    scoutp_speed = scrapy.Field()
-    scoutp_defense = scrapy.Field()
+    scoutp_control = scrapy.Field()
+    scoutp_movement = scrapy.Field()
+    scoutp_velocity = scrapy.Field()
+    scoutp_stamina = scrapy.Field()
 
     #scouth data
     scouth_power = scrapy.Field()
@@ -270,6 +306,181 @@ class Item(scrapy.Item):
     scoutr_rc = scrapy.Field()
     scoutr_rf = scrapy.Field()
 
+
+
+FIELDNAMES = [
+			"PLAYERLINK",
+			"PLAYERNAME",
+			"TEAMNAME",
+			"SALARY",
+			"FTV",
+			"AGE",
+			"TBHROWS",
+			"BATS",
+			"AVE",
+			"SLG",
+			"RBI",
+			"POS",
+			"SEASON-AB",
+			"SEASON-HITS",
+			"SEASON-AVG",
+			"SEASON-RBI",
+			"SEASON-SLG",
+			"SEASON-2B",
+			"SEASON-3B",
+			"SEASON-HR",
+			"SEASON-BB",
+			"SEASON-RUNS",
+			"SEASON-TB",
+			"SEASON-SB",
+			"SEASON-SB%",
+			"SEASON-OBP",
+			"SEASON-OPS",
+			"SEASON-XBH",
+			"SEASON-AB/HR",
+			"SEASON-ISO",
+			"SEASON-RC",
+			"SEASON-E",
+			"CAREER-SEASON",
+			"CAREER-TEAM",
+			"CAREER-AB",
+			"CAREER-HITS",
+			"CAREER-AVG",
+			"CAREER-RBI",
+			"CAREER-SLG",
+			"CAREER-2B",
+			"CAREER-3B",
+			"CAREER-HR",
+			"CAREER-SB",
+			"MINORS-AB",
+			"MINORS-HITS",
+			"MINORS-AVG",
+			"MINORS-RBI",
+			"NINORS-SLG",
+			"MINORS-2B",
+			"MINORS-3B",
+			"MINORS-HR",
+			"MINORS-BB",
+			"MINORS-TB",
+			"MINORS-PA",
+			"MINORS-OBP",
+			"MINORS-OPS",
+			"MINORS-BB/PA",
+			"MINORS-XBH",
+			"MINORS-AB/HR",
+			"MINORS-ISO",
+			"MINORS-RC",
+			"SCOUTP-CONTROL",
+			"SCOUTP-MOVEMENT",
+			"SCOUTP-VELOCITY",
+			"SCOUTP-STAMINA",
+			"SCOUTH-POWER",
+			"SCOUTH-CONTACT",
+			"SCOUTH-SPEED",
+			"SCOUTH-DEFENSE",
+			"SCOUTR-LF",
+			"SCOUTR-LC",
+			"SCOUTR-C",
+			"SCOUTR-RC",
+			"SCOUTR-RF"
+]
+
+class XLSXPipeline(object):
+    wb = None
+    ws = None
+
+    def open_spider(self, spider):
+        self.wb = openpyxl.Workbook()
+        self.ws = self.wb.active
+
+        self.ws.append(FIELDNAMES)
+    
+    def process_item(self, item, spider):
+        adapter = ItemAdapter(item)
+
+        self.ws.append([
+        	adapter.get("player_link"),
+        	adapter.get("player_name"), 
+        	adapter.get("team_name"),
+        	adapter.get("salary"),
+        	adapter.get("ftv"),
+        	adapter.get("age"),
+        	adapter.get("tbhrows"),
+        	adapter.get("bats"),
+        	adapter.get("avg"),
+        	adapter.get("slg"),
+        	adapter.get("rbi"),
+        	adapter.get("pos"),
+        	adapter.get("season_ab"),
+        	adapter.get("season_hits"),
+        	adapter.get("season_avg"),
+        	adapter.get("season_rbi"),
+        	adapter.get("season_slg"),
+        	adapter.get("season_2b"),
+        	adapter.get("season_3b"),
+        	adapter.get("season_hr"),
+        	adapter.get("season_bb"),
+        	adapter.get("season_runs"),
+        	adapter.get("season_tb"),
+        	adapter.get("season_sb"),
+        	adapter.get("season_sb_percent"),
+        	adapter.get("season_obp"),
+        	adapter.get("season_obps"),
+        	adapter.get("season_xbh"),
+        	adapter.get("season_ab_hr"),
+        	adapter.get("season_iso"),
+        	adapter.get("season_rc"),
+        	adapter.get("season_e"),
+        	adapter.get("career_season"),
+        	adapter.get("career_team"),
+        	adapter.get("career_ab"),
+        	adapter.get("career_hits"),
+        	adapter.get("career_avg"),
+        	adapter.get("career_rbi"),
+        	adapter.get("career_slg"),
+        	adapter.get("career_2b"),
+        	adapter.get("career_3b"),
+        	adapter.get("career_hr"),
+        	adapter.get("career_sb"),
+        	adapter.get("minors_ab"),
+        	adapter.get("minors_hits"),
+        	adapter.get("minors_avg"),
+        	adapter.get("minors_rbi"),
+        	adapter.get("minors_slg"),
+        	adapter.get("minors_2b"),
+        	adapter.get("minors_3b"),
+        	adapter.get("minors_hr"),
+        	adapter.get("minors_bb"),
+        	adapter.get("minors_tb"),
+        	adapter.get("minors_pa"),
+        	adapter.get("minors_obp"),
+        	adapter.get("minors_ops"),
+        	adapter.get("minors_bb_pa"),
+        	adapter.get("minors_xbh"),
+        	adapter.get("minors_ab_hr"),
+        	adapter.get("minors_iso"),
+        	adapter.get("minors_rc"),
+        	adapter.get("scoutp_control"),
+        	adapter.get("scoutp_movement"),
+        	adapter.get("scoutp_velocity"),
+        	adapter.get("scoutp_stamina"),
+        	adapter.get("scouth_power"),
+        	adapter.get("scouth_contact"),
+        	adapter.get("scouth_speed"),
+        	adapter.get("scouth_defense"),
+        	adapter.get("scoutr_lf"),
+        	adapter.get("scoutr_lc"),
+        	adapter.get("scoutr_c"),
+        	adapter.get("scoutr_rc"),
+        	adapter.get("scoutr_rf")
+        	])
+
+        return item
+
+    def close_spider(self, spider):
+        self.wb.save('output.xlsx')
+
+
 selectors = {
 	"player_name" : '//div[@id="player-general-info"]/div[1]/span[1]/text()',
     "team_name" : '//div[@id="player-general-info"]/div[1]/span/a/text()',
@@ -281,10 +492,9 @@ selectors = {
     "tbhrows" : '//*[@id="player-general-info"]/div[1]/div/span[1]/text()',
     "bats_p" : '//*[@id="player-general-info"]/div[1]/div/span[4]/text()',
     "bats" : '//*[@id="player-general-info"]/div[1]/div/span[3]/text()',
-    "avg" : '//*[@id="player-feature-stats"]/div[1]/div/text()',
-    "slg" : '//*[@id="player-feature-stats"]/div[2]/div/text()',
-    "rbi" : '//*[@id="player-feature-stats"]/div[3]/div/text()',
-    "rank" : '//*[@id="player-general-info"]/div[1]/span[2]/span/text()',
+    "avg" : '//*[@id="player-feature-stats"]/div[@title="Batting Avg"]/div/text()',
+    "slg" : '//*[@id="player-feature-stats"]/div[@title="Slugging %"]/div/text()',
+    "rbi" : '//*[@id="player-feature-stats"]/div[@title="Runs Batted In"]/div/text()',
 
     "season_ab" : '//div[@id="tab-content-stats-season"]/div/div/div[@title="At-Bats"]/div[2]/text()',
     "season_hits" : '//div[@id="tab-content-stats-season"]/div/div/div[@title="Hits"]/div[2]/text()',
@@ -339,10 +549,10 @@ selectors = {
     "minors_iso" : '//*[@id="tab-content-stats-minor"]/div/div/div[@title="Isolated Power"]/div[2]/text()',
     "minors_rc" : '//*[@id="tab-content-stats-minor"]/div/div/div[@title="Runs Created"]/div[2]/text()',
 
-    "scoutp_power" : '//*[@id="ratings-pitching-bars-container"]/div/div[1]/div/div[1]/span/text()',
-    "scoutp_contact" : '//*[@id="ratings-pitching-bars-container"]/div/div[2]/div/div[1]/span/text()',
-    "scoutp_speed" : '//*[@id="ratings-pitching-bars-container"]/div/div[3]/div/div[1]/span/text()',
-    "scoutp_defense" : '//*[@id="ratings-pitching-bars-container"]/div/div[4]/div/div[1]/span/text()',
+    "scoutp_control" : '//*[@id="ratings-pitching-bars-container"]/div/div[1]/div/div[1]/span/text()',
+    "scoutp_movement" : '//*[@id="ratings-pitching-bars-container"]/div/div[2]/div/div[1]/span/text()',
+    "scoutp_velocity" : '//*[@id="ratings-pitching-bars-container"]/div/div[3]/div/div[1]/span/text()',
+    "scoutp_stamina" : '//*[@id="ratings-pitching-bars-container"]/div/div[4]/div/div[1]/span/text()',
 
     "scouth_power" : '//*[@id="ratings-hitting-bars-container"]/div/div/div[1]/div/div[1]/span/text()',
     "scouth_contact" : '//*[@id="ratings-hitting-bars-container"]/div/div/div[2]/div/div[1]/span/text()',
@@ -353,14 +563,20 @@ selectors = {
     "scoutr_lc" : '//*[@id="range-grid-container"]/div/svg/text[2]/text()',
     "scoutr_c" : '//*[@id="range-grid-container"]/div/svg/text[3]/text()',
     "scoutr_rc" : '//*[@id="range-grid-container"]/div/svg/text[4]/text()',
-    "scoutr_rf" : '//*[@id="range-grid-container"]/div/svg/text[2]/text()',
+    "scoutr_rf" : '//*[@id="range-grid-container"]/div/svg/text[5]/text()',
 }
-configure_logging({'LOG_FORMAT': '%(levelname)s: %(message)s'})
-runner = CrawlerRunner(settings = {
-	"FEEDS": {
-        "items.json": {"format": "json"},
-    }
-	})
-d = runner.crawl(FranchiseScrapy)
-d.addBoth(lambda _: reactor.stop())
-reactor.run()
+
+def start_crawl():
+	print("Start Crawling...")
+	configure_logging({'LOG_FORMAT': '%(levelname)s: %(message)s'})
+	runner = CrawlerRunner()
+	d = runner.crawl(FranchiseScrapy)
+	d.addBoth(lambda _: reactor.stop())
+	reactor.run()
+
+start_crawl()
+schedule.every().monday.do(start_crawl)
+
+while True:
+	schedule.run_pending()
+    # time.sleep(1)
